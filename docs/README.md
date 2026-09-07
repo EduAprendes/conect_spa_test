@@ -16,6 +16,9 @@ cliente nuevo sin arrancar de cero. Cada doc cubre una pieza:
    aprendidas sobre trabajar con un repo de GitHub y un proyecto de Vercel
    que pertenecen a **cuentas distintas** (muy común: vos desarrollás,
    el cliente es dueño del proyecto).
+6. [`06-CATALOGO-SERVICIOS.md`](./06-CATALOGO-SERVICIOS.md) — cómo cargar
+   el catálogo de servicios/tratamientos del negocio en el contexto de la
+   IA para que no invente precios ni beneficios.
 
 ## Stack usado
 
