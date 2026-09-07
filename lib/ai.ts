@@ -1,7 +1,9 @@
 import { generateText, tool, isStepCount, type ModelMessage } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
-import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "./calendar";
+import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, getBusyPeriods } from "./calendar";
+import { getHuecosDisponibles } from "./availability";
+import { businessNow, toBusinessDateTime } from "./timezone";
 import {
   recordBooking,
   getActiveBookings,
@@ -21,21 +23,12 @@ function getModel() {
   return google("gemini-3.8-flash");
 }
 
-// Offset fijo del negocio (no manejamos múltiples husos horarios).
-const UTC_OFFSET = process.env.BUSINESS_UTC_OFFSET || "-04:00";
 const DEFAULT_DURATION_MIN = 60;
-
-function offsetToMinutes(offset: string): number {
-  const match = offset.match(/^([+-])(\d{2}):(\d{2})$/);
-  if (!match) return 0;
-  const sign = match[1] === "-" ? -1 : 1;
-  return sign * (parseInt(match[2], 10) * 60 + parseInt(match[3], 10));
-}
 
 // Gemini no tiene noción de "hoy" — sin esto no puede resolver "mañana",
 // "el viernes", etc. y termina volviendo a preguntar la fecha exacta.
 function getFechaActualDelNegocio(): string {
-  const shifted = new Date(Date.now() + offsetToMinutes(UTC_OFFSET) * 60_000);
+  const shifted = businessNow();
   const fecha = shifted.toISOString().slice(0, 10);
   const hora = shifted.toISOString().slice(11, 16);
   const dia = new Intl.DateTimeFormat("es-AR", { weekday: "long", timeZone: "UTC" }).format(shifted);
@@ -52,11 +45,17 @@ mañana" o un día de la semana, calculá vos la fecha exacta en formato
 AAAA-MM-DD a partir de esta referencia — no le vuelvas a preguntar la fecha
 exacta si ya la podés calcular con esta información.
 
+Si el cliente pregunta por disponibilidad, horarios libres, o qué días hay
+turno, llamá "consultar_disponibilidad" en vez de inventar horarios — nunca
+ofrezcas un horario sin haberlo consultado primero. Ofrecele solo 2 o 3
+opciones concretas (no le tires la lista entera encima).
+
 Cuando el cliente confirme un turno nuevo (servicio, fecha y hora concretos),
 llamá la herramienta "crear_turno" con esos datos exactos. No la llames si
-todavía falta algún dato — primero preguntá lo que falte. Después de que la
-herramienta confirme, avisale al cliente que la fecha y hora quedaron
-agendadas.
+todavía falta algún dato — primero preguntá lo que falte. Si "crear_turno"
+devuelve que el horario ya está ocupado, avisale y ofrecele consultar otros
+horarios. Después de que la herramienta confirme, avisale al cliente que la
+fecha y hora quedaron agendadas.
 
 Si el cliente pide cambiar la fecha/hora de un turno ya agendado, llamá
 "reagendar_turno". Si pide cancelarlo, llamá "cancelar_turno". Si esas
@@ -68,7 +67,7 @@ al cliente en vez de inventar uno.`;
 
 function calcularInicioYFin(fecha: string, horaInicio: string, duracionMinutos?: number) {
   const duration = duracionMinutos ?? DEFAULT_DURATION_MIN;
-  const start = new Date(`${fecha}T${horaInicio}:00${UTC_OFFSET}`);
+  const start = toBusinessDateTime(fecha, horaInicio);
   const end = new Date(start.getTime() + duration * 60_000);
   return { start, end };
 }
@@ -91,6 +90,11 @@ function buildTools(senderId: string) {
       execute: async ({ servicio, nombreCliente, fecha, horaInicio, duracionMinutos }) => {
         const { start, end } = calcularInicioYFin(fecha, horaInicio, duracionMinutos);
 
+        const busy = await getBusyPeriods(start.toISOString(), end.toISOString());
+        if (busy.length > 0) {
+          return { error: "horario_ocupado", fecha, horaInicio };
+        }
+
         const event = await createCalendarEvent({
           summary: `${servicio} - ${nombreCliente}`,
           description: `Turno agendado vía Instagram (sender_id: ${senderId})`,
@@ -107,6 +111,20 @@ function buildTools(senderId: string) {
         });
 
         return { confirmado: true, fecha, horaInicio, servicio };
+      },
+    }),
+
+    consultar_disponibilidad: tool({
+      description:
+        "Consulta los horarios realmente libres en el calendario del spa entre dos fechas (máximo 14 días de rango). Usar siempre antes de ofrecer un horario.",
+      inputSchema: z.object({
+        fechaDesde: z.string().describe("Fecha de inicio de la búsqueda, formato YYYY-MM-DD"),
+        fechaHasta: z.string().describe("Fecha de fin de la búsqueda (inclusive), formato YYYY-MM-DD"),
+      }),
+      execute: async ({ fechaDesde, fechaHasta }) => {
+        const dias = await getHuecosDisponibles(fechaDesde, fechaHasta);
+        if (dias.length === 0) return { sinDisponibilidad: true };
+        return { dias };
       },
     }),
 

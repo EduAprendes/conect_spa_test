@@ -78,3 +78,23 @@ export async function deleteCalendarEvent(eventId: string) {
   const calendar = getCalendarClient();
   await calendar.events.delete({ calendarId, eventId });
 }
+
+export async function getBusyPeriods(
+  timeMinISO: string,
+  timeMaxISO: string,
+): Promise<{ start: string; end: string }[]> {
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+  if (!calendarId) throw new Error("GOOGLE_CALENDAR_ID no está configurado");
+
+  const calendar = getCalendarClient();
+  const { data } = await calendar.freebusy.query({
+    requestBody: {
+      timeMin: timeMinISO,
+      timeMax: timeMaxISO,
+      items: [{ id: calendarId }],
+    },
+  });
+
+  const busy = data.calendars?.[calendarId]?.busy ?? [];
+  return busy.map((b) => ({ start: b.start ?? "", end: b.end ?? "" }));
+}
