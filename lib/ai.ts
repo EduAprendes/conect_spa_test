@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, getBusyPeriods } from "./calendar";
 import { getHuecosDisponibles } from "./availability";
 import { businessNow, toBusinessDateTime } from "./timezone";
+import { CATALOGO_SERVICIOS } from "./catalog";
 import {
   recordBooking,
   getActiveBookings,
@@ -39,6 +40,12 @@ function buildSystemPrompt(): string {
   return `Sos el asistente de atención al cliente de Conect Spa por Instagram.
 Respondé de forma breve, cordial y directa. Si no sabés algo, decilo con honestidad
 en vez de inventar información.
+
+Catálogo de servicios del spa (usalo para responder preguntas sobre
+tratamientos, beneficios y precios — no inventes servicios ni precios que no
+estén acá):
+
+${CATALOGO_SERVICIOS}
 
 ${getFechaActualDelNegocio()} Cuando el cliente diga "hoy", "mañana", "pasado
 mañana" o un día de la semana, calculá vos la fecha exacta en formato
