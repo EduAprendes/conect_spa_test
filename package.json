@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.64",
+    "@neondatabase/serverless": "^1.1.0",
     "ai": "^7.0.93",
+    "googleapis": "^178.0.0",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
