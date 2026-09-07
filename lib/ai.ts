@@ -19,14 +19,38 @@ function getModel() {
 const UTC_OFFSET = process.env.BUSINESS_UTC_OFFSET || "-04:00";
 const DEFAULT_DURATION_MIN = 60;
 
-const SYSTEM_PROMPT = `Sos el asistente de atención al cliente de Conect Spa por Instagram.
+function offsetToMinutes(offset: string): number {
+  const match = offset.match(/^([+-])(\d{2}):(\d{2})$/);
+  if (!match) return 0;
+  const sign = match[1] === "-" ? -1 : 1;
+  return sign * (parseInt(match[2], 10) * 60 + parseInt(match[3], 10));
+}
+
+// Gemini no tiene noción de "hoy" — sin esto no puede resolver "mañana",
+// "el viernes", etc. y termina volviendo a preguntar la fecha exacta.
+function getFechaActualDelNegocio(): string {
+  const shifted = new Date(Date.now() + offsetToMinutes(UTC_OFFSET) * 60_000);
+  const fecha = shifted.toISOString().slice(0, 10);
+  const hora = shifted.toISOString().slice(11, 16);
+  const dia = new Intl.DateTimeFormat("es-AR", { weekday: "long", timeZone: "UTC" }).format(shifted);
+  return `Hoy es ${dia} ${fecha} (formato AAAA-MM-DD) y son las ${hora} hs en el huso horario del negocio.`;
+}
+
+function buildSystemPrompt(): string {
+  return `Sos el asistente de atención al cliente de Conect Spa por Instagram.
 Respondé de forma breve, cordial y directa. Si no sabés algo, decilo con honestidad
 en vez de inventar información.
+
+${getFechaActualDelNegocio()} Cuando el cliente diga "hoy", "mañana", "pasado
+mañana" o un día de la semana, calculá vos la fecha exacta en formato
+AAAA-MM-DD a partir de esta referencia — no le vuelvas a preguntar la fecha
+exacta si ya la podés calcular con esta información.
 
 Cuando el cliente confirme un turno (servicio, fecha y hora concretos), llamá la
 herramienta "crear_turno" con esos datos exactos. No la llames si todavía falta
 algún dato — primero preguntá lo que falte. Después de que la herramienta
 confirme, avisale al cliente la fecha y hora quedaron agendadas.`;
+}
 
 function buildTools(senderId: string) {
   return {
@@ -81,7 +105,7 @@ export async function generateReply(
 
   const { text } = await generateText({
     model: getModel(),
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(),
     messages,
     tools: buildTools(senderId),
     stopWhen: isStepCount(4),
