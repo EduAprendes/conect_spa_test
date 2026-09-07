@@ -37,6 +37,9 @@ function ensureSchema() {
           created_at timestamptz not null default now()
         )
       `;
+      await db`
+        alter table bookings add column if not exists status text not null default 'confirmed'
+      `;
     })();
   }
   return schemaReady;
@@ -76,4 +79,45 @@ export async function recordBooking(params: {
     insert into bookings (sender_id, service, starts_at, ends_at, calendar_event_id)
     values (${params.senderId}, ${params.service}, ${params.startsAt}, ${params.endsAt}, ${params.calendarEventId})
   `;
+}
+
+export type Booking = {
+  id: string;
+  service: string;
+  startsAt: string;
+  endsAt: string;
+  calendarEventId: string;
+};
+
+export async function getActiveBookings(senderId: string): Promise<Booking[]> {
+  await ensureSchema();
+  const db = getSql();
+  const rows = await db`
+    select id, service, starts_at, ends_at, calendar_event_id
+    from bookings
+    where sender_id = ${senderId} and status = 'confirmed'
+    order by starts_at asc
+  `;
+  return rows.map((r) => ({
+    id: String(r.id),
+    service: r.service,
+    startsAt: r.starts_at,
+    endsAt: r.ends_at,
+    calendarEventId: r.calendar_event_id,
+  }));
+}
+
+export async function updateBooking(id: string, params: { startsAt: string; endsAt: string }) {
+  await ensureSchema();
+  const db = getSql();
+  await db`
+    update bookings set starts_at = ${params.startsAt}, ends_at = ${params.endsAt}
+    where id = ${id}
+  `;
+}
+
+export async function cancelBooking(id: string) {
+  await ensureSchema();
+  const db = getSql();
+  await db`update bookings set status = 'cancelled' where id = ${id}`;
 }

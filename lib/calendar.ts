@@ -45,3 +45,36 @@ export async function createCalendarEvent(params: {
 
   return data;
 }
+
+export async function updateCalendarEvent(params: {
+  eventId: string;
+  summary?: string;
+  description?: string;
+  startISO: string;
+  endISO: string;
+}) {
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+  if (!calendarId) throw new Error("GOOGLE_CALENDAR_ID no está configurado");
+
+  const calendar = getCalendarClient();
+  const { data } = await calendar.events.patch({
+    calendarId,
+    eventId: params.eventId,
+    requestBody: {
+      summary: params.summary,
+      description: params.description,
+      start: { dateTime: params.startISO },
+      end: { dateTime: params.endISO },
+    },
+  });
+
+  return data;
+}
+
+export async function deleteCalendarEvent(eventId: string) {
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+  if (!calendarId) throw new Error("GOOGLE_CALENDAR_ID no está configurado");
+
+  const calendar = getCalendarClient();
+  await calendar.events.delete({ calendarId, eventId });
+}

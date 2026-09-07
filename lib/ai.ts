@@ -1,8 +1,14 @@
 import { generateText, tool, isStepCount, type ModelMessage } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
-import { createCalendarEvent } from "./calendar";
-import { recordBooking, type ConversationMessage } from "./db";
+import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "./calendar";
+import {
+  recordBooking,
+  getActiveBookings,
+  updateBooking,
+  cancelBooking,
+  type ConversationMessage,
+} from "./db";
 
 let google: ReturnType<typeof createGoogleGenerativeAI> | null = null;
 
@@ -46,10 +52,25 @@ mañana" o un día de la semana, calculá vos la fecha exacta en formato
 AAAA-MM-DD a partir de esta referencia — no le vuelvas a preguntar la fecha
 exacta si ya la podés calcular con esta información.
 
-Cuando el cliente confirme un turno (servicio, fecha y hora concretos), llamá la
-herramienta "crear_turno" con esos datos exactos. No la llames si todavía falta
-algún dato — primero preguntá lo que falte. Después de que la herramienta
-confirme, avisale al cliente la fecha y hora quedaron agendadas.`;
+Cuando el cliente confirme un turno nuevo (servicio, fecha y hora concretos),
+llamá la herramienta "crear_turno" con esos datos exactos. No la llames si
+todavía falta algún dato — primero preguntá lo que falte. Después de que la
+herramienta confirme, avisale al cliente que la fecha y hora quedaron
+agendadas.
+
+Si el cliente pide cambiar la fecha/hora de un turno ya agendado, llamá
+"reagendar_turno". Si pide cancelarlo, llamá "cancelar_turno". Si esas
+herramientas devuelven una lista de turnos para elegir (porque el cliente
+tiene más de uno activo), mostrásela y preguntale cuál, pasando el "id" del
+turno elegido en la siguiente llamada. Si devuelven que no hay turnos, avisale
+al cliente en vez de inventar uno.`;
+}
+
+function calcularInicioYFin(fecha: string, horaInicio: string, duracionMinutos?: number) {
+  const duration = duracionMinutos ?? DEFAULT_DURATION_MIN;
+  const start = new Date(`${fecha}T${horaInicio}:00${UTC_OFFSET}`);
+  const end = new Date(start.getTime() + duration * 60_000);
+  return { start, end };
 }
 
 function buildTools(senderId: string) {
@@ -68,9 +89,7 @@ function buildTools(senderId: string) {
           .describe("Duración del turno en minutos (por defecto 60)"),
       }),
       execute: async ({ servicio, nombreCliente, fecha, horaInicio, duracionMinutos }) => {
-        const duration = duracionMinutos ?? DEFAULT_DURATION_MIN;
-        const start = new Date(`${fecha}T${horaInicio}:00${UTC_OFFSET}`);
-        const end = new Date(start.getTime() + duration * 60_000);
+        const { start, end } = calcularInicioYFin(fecha, horaInicio, duracionMinutos);
 
         const event = await createCalendarEvent({
           summary: `${servicio} - ${nombreCliente}`,
@@ -88,6 +107,66 @@ function buildTools(senderId: string) {
         });
 
         return { confirmado: true, fecha, horaInicio, servicio };
+      },
+    }),
+
+    reagendar_turno: tool({
+      description:
+        "Cambia la fecha/hora de un turno ya agendado del cliente. Si tiene más de un turno activo y no se pasó `id`, devuelve la lista para que el cliente elija.",
+      inputSchema: z.object({
+        id: z.string().optional().describe("Id del turno a reagendar, si ya se sabe cuál es"),
+        nuevaFecha: z.string().describe("Nueva fecha en formato YYYY-MM-DD"),
+        nuevaHora: z.string().describe("Nueva hora de inicio en formato HH:mm (24hs)"),
+        duracionMinutos: z.number().optional(),
+      }),
+      execute: async ({ id, nuevaFecha, nuevaHora, duracionMinutos }) => {
+        const activos = await getActiveBookings(senderId);
+        if (activos.length === 0) return { error: "sin_turnos_activos" };
+
+        const turno = id ? activos.find((b) => b.id === id) : activos.length === 1 ? activos[0] : undefined;
+
+        if (!turno) {
+          return {
+            requiereSeleccion: true,
+            turnos: activos.map((b) => ({ id: b.id, servicio: b.service, inicio: b.startsAt })),
+          };
+        }
+
+        const { start, end } = calcularInicioYFin(nuevaFecha, nuevaHora, duracionMinutos);
+        await updateCalendarEvent({
+          eventId: turno.calendarEventId,
+          startISO: start.toISOString(),
+          endISO: end.toISOString(),
+        });
+        await updateBooking(turno.id, { startsAt: start.toISOString(), endsAt: end.toISOString() });
+
+        return { reagendado: true, servicio: turno.service, nuevaFecha, nuevaHora };
+      },
+    }),
+
+    cancelar_turno: tool({
+      description:
+        "Cancela un turno ya agendado del cliente. Si tiene más de un turno activo y no se pasó `id`, devuelve la lista para que el cliente elija.",
+      inputSchema: z.object({
+        id: z.string().optional().describe("Id del turno a cancelar, si ya se sabe cuál es"),
+      }),
+      execute: async ({ id }) => {
+        const activos = await getActiveBookings(senderId);
+        if (activos.length === 0) return { error: "sin_turnos_activos" };
+
+        const turno = id ? activos.find((b) => b.id === id) : activos.length === 1 ? activos[0] : undefined;
+
+        if (!turno) {
+          return {
+            requiereSeleccion: true,
+            turnos: activos.map((b) => ({ id: b.id, servicio: b.service, inicio: b.startsAt })),
+          };
+        }
+
+        await deleteCalendarEvent(turno.calendarEventId);
+        await cancelBooking(turno.id);
+
+        return { cancelado: true, servicio: turno.service, inicio: turno.startsAt };
       },
     }),
   };
