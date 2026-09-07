@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { sendInstagramMessage } from "@/lib/instagram";
 import { generateReply } from "@/lib/ai";
 import { getConversation, saveConversation } from "@/lib/db";
+import { espejarMensajeInstagramChatwoot } from "@/lib/chatwoot";
 
 // Evita procesar el mismo mensaje dos veces si Meta reintenta la entrega.
 // Vive solo en memoria de la instancia: ayuda en el caso común, no es una
@@ -55,6 +56,8 @@ async function handleMessagingEvent(event: any) {
   const senderId = event.sender?.id;
   const text = message.text;
   if (!senderId || !text) return;
+
+  await espejarMensajeInstagramChatwoot(senderId, text, "incoming");
 
   // Si la base de datos todavía no está configurada (DATABASE_URL), seguimos
   // respondiendo sin memoria de conversación en vez de dejar al bot mudo.

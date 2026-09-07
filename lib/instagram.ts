@@ -1,3 +1,5 @@
+import { espejarMensajeInstagramChatwoot } from "./chatwoot";
+
 const GRAPH_BASE = "https://graph.instagram.com/v23.0";
 
 export async function sendInstagramMessage(recipientId: string, text: string) {
@@ -21,5 +23,7 @@ export async function sendInstagramMessage(recipientId: string, text: string) {
     throw new Error(`Instagram send failed (${res.status}): ${body}`);
   }
 
-  return res.json();
+  const data = await res.json();
+  await espejarMensajeInstagramChatwoot(recipientId, text, "outgoing");
+  return data;
 }
